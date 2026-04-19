@@ -3,27 +3,27 @@
     <div class="header">
       <div class="logo">SidVPS Dashboard</div>
       <div class="user-info">
-        <span class="user-name">Xin chào, <b>{{ user.username }}</b> (Admin)</span>
-        <button @click="logout" class="btn-logout">Đăng Xuất</button>
+        <span class="user-name">Welcome, <b>{{ user.username }}</b> (Admin)</span>
+        <button @click="logout" class="btn-logout">Sign Out</button>
       </div>
     </div>
     
     <div class="grid" v-if="sysInfo">
       <div class="card">
-        <div class="card-title">Địa Chỉ IP Máy Chủ</div>
+        <div class="card-title">Server IP Address</div>
         <div class="card-value">{{ sysInfo.ip }}</div>
       </div>
       <div class="card">
-        <div class="card-title">Thời Gian Hoạt Động</div>
+        <div class="card-title">System Uptime</div>
         <div class="card-value">{{ sysInfo.uptime }}</div>
       </div>
     </div>
     <div v-else class="loading-state">
-      Đang gọi truy vấn từ Backend API...
+      Fetching data from Backend API...
     </div>
     
     <div class="footer">
-      &copy; 2026 SidVPS Manager. Hệ thống Giao diện Web SPA Vue.
+      &copy; 2026 SidVPS Manager. Vue SPA Interface.
     </div>
   </div>
 </template>

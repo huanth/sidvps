@@ -1,19 +1,19 @@
 <template>
   <div class="glass-container">
     <div class="glass-card">
-      <h2 class="title">Khởi Tạo Admin</h2>
-      <p class="sub-text">Hệ thống phân mảnh khởi tạo lần đầu. Vui lòng thiết lập tài khoản quản trị.</p>
+      <h2 class="title">Admin Setup</h2>
+      <p class="sub-text">Initial system setup. Please create an administrator account.</p>
       
       <div v-if="errorMsg" class="alert-error">{{ errorMsg }}</div>
       
       <form @submit.prevent="handleSetup">
         <div class="input-group">
-          <input type="text" v-model="username" placeholder="Nhập Username" required autocomplete="off">
+          <input type="text" v-model="username" placeholder="Enter Username" required autocomplete="off">
         </div>
         <div class="input-group">
-          <input type="password" v-model="password" placeholder="Nhập Password" required>
+          <input type="password" v-model="password" placeholder="Enter Password" required>
         </div>
-        <button type="submit" class="btn-primary">Bắt Đầu Sử Dụng</button>
+        <button type="submit" class="btn-primary">Start Using Now</button>
       </form>
     </div>
   </div>
@@ -41,10 +41,10 @@ const handleSetup = async () => {
     if (data.success) {
       router.push('/login')
     } else {
-      errorMsg.value = data.error || 'Khởi tạo thất bại'
+      errorMsg.value = data.error || 'Setup failed'
     }
   } catch (e) {
-    errorMsg.value = 'Lỗi kết nối đến máy chủ.'
+    errorMsg.value = 'Connection error to server.'
   }
 }
 </script>

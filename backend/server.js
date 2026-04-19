@@ -41,12 +41,12 @@ app.get('/api/auth/check-setup', (req, res) => {
 
 // 2. Tái tạo Setup
 app.post('/api/auth/setup', (req, res) => {
-    if (getUsers().length > 0) return res.status(400).json({ error: 'Đã tồn tại tài khoản Admin.' });
+    if (getUsers().length > 0) return res.status(400).json({ error: 'Admin account already exists.' });
     const { user, pass } = req.body;
-    if (!user || !pass) return res.status(400).json({ error: 'Dữ liệu không hợp lệ.' });
+    if (!user || !pass) return res.status(400).json({ error: 'Invalid data.' });
     
     saveUser({ username: user, password: pass, role: 'root' });
-    res.json({ success: true, message: 'Tạo tài khoản thành công.' });
+    res.json({ success: true, message: 'Account created successfully.' });
 });
 
 // 3. Xử lý Login Trả về JSON
@@ -57,7 +57,7 @@ app.post('/api/auth/login', (req, res) => {
         req.session.user = { username: admin.username, role: admin.role };
         res.json({ success: true, user: req.session.user });
     } else {
-        res.status(401).json({ error: 'Sai tài khoản hoặc mật khẩu.' });
+        res.status(401).json({ error: 'Invalid username or password.' });
     }
 });
 

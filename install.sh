@@ -9,21 +9,21 @@ NC='\033[0m'
 if [ -f "/usr/local/bin/sidvps" ]; then
     clear
     echo -e "${YELLOW}====================================================${NC}"
-    echo -e "          THÔNG BÁO: HỆ THỐNG ĐÃ ĐƯỢC CÀI ĐẶT"
+    echo -e "          NOTICE: SYSTEM ALREADY INSTALLED"
     echo -e "${YELLOW}====================================================${NC}"
-    echo -e "Phát hiện bộ công cụ ${GREEN}sidvps${NC} đã tồn tại."
+    echo -e "Detected ${GREEN}sidvps${NC} toolkit already exists."
     echo ""
-    echo "Lựa chọn của bạn:"
-    echo -e " 1) ${RED}Xóa đi cài lại mới${NC}"
-    echo -e " 2) ${GREEN}Thoát cài đặt${NC}"
+    echo "Your options:"
+    echo -e " 1) ${RED}Remove and clean reinstall${NC}"
+    echo -e " 2) ${GREEN}Exit installation${NC}"
     echo -e "----------------------------------------------------"
     
-    # FIX: Ép đọc dữ liệu từ terminal
-    read -p "Nhập lựa chọn (1-2): " check_choice < /dev/tty
+    # FIX: Force read data from terminal
+    read -p "Select option (1-2): " check_choice < /dev/tty
 
     case $check_choice in
         1)
-            echo -e "${YELLOW}>>> Đang gỡ bỏ bản cũ...${NC}"
+            echo -e "${YELLOW}>>> Removing old version...${NC}"
             sudo systemctl stop sidvps-ui 2>/dev/null
             sudo systemctl disable sidvps-ui 2>/dev/null
             sudo rm -f /etc/systemd/system/sidvps-ui.service
@@ -32,39 +32,39 @@ if [ -f "/usr/local/bin/sidvps" ]; then
             sudo systemctl daemon-reload
             ;;
         2)
-            echo -e "${GREEN}Đã hủy. Tạm biệt!${NC}"
+            echo -e "${GREEN}Canceled. Goodbye!${NC}"
             exit 0
             ;;
         *)
-            echo -e "${RED}Lựa chọn không hợp lệ. Thoát!${NC}"
+            echo -e "${RED}Invalid selection. Exiting!${NC}"
             exit 1
             ;;
     esac
 fi
 
-# Tiếp tục cài đặt...
-echo -e "${GREEN}>>> Đang bắt đầu cài đặt sidvps...${NC}"
+# Continue installation...
+echo -e "${GREEN}>>> Starting sidvps installation...${NC}"
 sudo apt-get update -y && sudo apt-get install -y curl wget git tar
-echo -e "${YELLOW}>>> Đang dọn dẹp các phiên bản Node.js cũ bị đụng độ...${NC}"
+echo -e "${YELLOW}>>> Cleaning up conflicting old Node.js versions...${NC}"
 sudo apt-get remove --purge -y nodejs npm libnode-dev || true
 sudo apt-get autoremove -y || true
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 sudo rm -rf /opt/sidvps
-echo -e "${GREEN}>>> Đang tải mã nguồn kiến trúc Vue + Node từ Github...${NC}"
+echo -e "${GREEN}>>> Downloading Vue + Node architecture source from Github...${NC}"
 sudo git clone https://github.com/huanth/sidvps.git /opt/sidvps
 
-# Cấu hình file thực thi CLI
+# Configure CLI executable
 if [ -f "/opt/sidvps/sidvps" ]; then
     sudo mv /opt/sidvps/sidvps /usr/local/bin/sidvps
     sudo chmod +x /usr/local/bin/sidvps
 fi
 
-echo -e "${YELLOW}>>> Đang cài đặt thư viện và Build Frontend Vue...${NC}"
+echo -e "${YELLOW}>>> Installing dependencies and Building Frontend Vue...${NC}"
 cd /opt/sidvps/frontend && sudo npm install && sudo npm run build
 
-echo -e "${YELLOW}>>> Đang cài đặt thư viện cho Backend API...${NC}"
+echo -e "${YELLOW}>>> Installing dependencies for Backend API...${NC}"
 cd /opt/sidvps/backend && sudo npm install
 
 sudo bash -c 'cat > /etc/systemd/system/sidvps-ui.service <<EOF
@@ -87,7 +87,7 @@ sudo systemctl daemon-reload && sudo systemctl enable sidvps-ui && sudo systemct
 [ -x "$(command -v ufw)" ] && sudo ufw allow 21999/tcp
 
 echo "===================================================="
-echo -e "${GREEN} CÀI ĐẶT HOÀN TẤT!${NC}"
-echo " CLI: Gõ 'sidvps'"
+echo -e "${GREEN} INSTALLATION COMPLETE!${NC}"
+echo " CLI: Type 'sidvps'"
 echo " WEB: http://$(curl -s ifconfig.me):21999"
 echo "===================================================="

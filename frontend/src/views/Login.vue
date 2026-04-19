@@ -1,8 +1,8 @@
 <template>
   <div class="glass-container">
     <div class="glass-card">
-      <h2 class="title">Đăng Nhập</h2>
-      <p class="sub-text">Chào mừng trở lại bảng điều khiển SidVPS.</p>
+      <h2 class="title">Sign In</h2>
+      <p class="sub-text">Welcome back to SidVPS Control Panel.</p>
       
       <div v-if="errorMsg" class="alert-error">{{ errorMsg }}</div>
       
@@ -13,7 +13,7 @@
         <div class="input-group">
           <input type="password" v-model="password" placeholder="Password" required>
         </div>
-        <button type="submit" class="btn-primary">Đăng Nhập</button>
+        <button type="submit" class="btn-primary">Login Now</button>
       </form>
     </div>
   </div>
@@ -53,10 +53,10 @@ const handleLogin = async () => {
     if (data.success) {
       router.push('/')
     } else {
-      errorMsg.value = data.error || 'Đăng nhập thất bại'
+      errorMsg.value = data.error || 'Login failed'
     }
   } catch (e) {
-    errorMsg.value = 'Lỗi kết nối đến máy chủ.'
+    errorMsg.value = 'Connection error to server.'
   }
 }
 </script>
