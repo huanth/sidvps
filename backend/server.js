@@ -85,33 +85,72 @@ app.get('/api/system/info', checkAuth, (req, res) => {
         res.json({
             ...sysInfo,
             version: getVersion(),
-            latest_version: 'v1.0.0' // Mocking latest, in reality fetch from Github
+            latest_version: 'v1.0.0'
         });
     });
 });
 
-// 6. Update Trigger
-app.post('/api/system/update', checkAuth, (req, res) => {
-    console.log('[Update] Triggering system update...');
-    // We run the update sequence in background
-    const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';
-    
-    exec(updateCmd, (err, stdout, stderr) => {
-        if (err) {
-            console.error('[Update Error]', stderr);
-            return res.json({ success: false, error: stderr });
-        }
-        console.log('[Update Success] System updated. Restarting in 5s...');
-        res.json({ success: true, message: 'Update success. System will restart.' });
-        
-        // Attempt restart after response
-        setTimeout(() => {
-            exec('sudo systemctl restart sidvps-ui');
-        }, 5000);
+// 6. Real-time System Stats (CPU, RAM, Disk)
+app.get('/api/system/stats', checkAuth, (req, res) => {
+    const cmd = `
+        echo "CPU:" $(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\\([0-9.]*\\)%* id.*/\\1/" | awk '{print 100 - $1}');
+        echo "RAM:" $(free -m | grep Mem | awk '{print $2 "," $3}');
+        echo "DISK:" $(df -m / | awk 'NR==2 {print $2 "," $3}');
+    `;
+    exec(cmd, (err, stdout) => {
+        const lines = (stdout || '').trim().split('\n');
+        const stats = { cpu: 0, ram: { total: 0, used: 0 }, disk: { total: 0, used: 0 } };
+        lines.forEach(line => {
+            if (line.startsWith('CPU:')) stats.cpu = parseFloat(line.split(':')[1].trim()) || 0;
+            if (line.startsWith('RAM:')) {
+                const parts = line.split(':')[1].trim().split(',');
+                stats.ram.total = parseInt(parts[0]) || 0;
+                stats.ram.used = parseInt(parts[1]) || 0;
+            }
+            if (line.startsWith('DISK:')) {
+                const parts = line.split(':')[1].trim().split(',');
+                stats.disk.total = parseInt(parts[0]) || 0;
+                stats.disk.used = parseInt(parts[1]) || 0;
+            }
+        });
+        res.json(stats);
     });
 });
 
-// 7. Logout
+// 7. Service Management
+app.get('/api/system/services', checkAuth, (req, res) => {
+    const services = ['nginx', 'mysql', 'php-fpm', 'sidvps-ui'];
+    const results = [];
+    let count = 0;
+    services.forEach(svc => {
+        exec(`systemctl is-active ${svc}`, (err, stdout) => {
+            results.push({ name: svc, status: stdout.trim() });
+            if (++count === services.length) res.json(results);
+        });
+    });
+});
+
+app.post('/api/system/service-action', checkAuth, (req, res) => {
+    const { service, action } = req.body;
+    if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+    exec(`sudo systemctl ${action} ${service}`, (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr });
+        res.json({ success: true, message: `${service} ${action}ed.` });
+    });
+});
+
+// 8. Update Trigger
+app.post('/api/system/update', checkAuth, (req, res) => {
+    console.log('[Update] Triggering system update...');
+    const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';
+    exec(updateCmd, (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr });
+        res.json({ success: true, message: 'Updated. Restarting...' });
+        setTimeout(() => { exec('sudo systemctl restart sidvps-ui'); }, 5000);
+    });
+});
+
+// 9. Logout
 app.post('/api/auth/logout', (req, res) => {
     req.session.destroy();
     res.json({ success: true });
