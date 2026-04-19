@@ -100,4 +100,4 @@ if (fs.existsSync(frontendDist)) {
     app.get('*', (req, res) => res.send('API Backend is running. Frontend Vue builds missing!'));
 }
 
-app.listen(PORT, '0.0.0.0', () => console.log(\`[Backend] API server running on \${PORT}\`));
+app.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API server running on ${PORT}`));
