@@ -23,7 +23,5 @@ jobs:
           port: 22
           script: |
             cd /home/dhqytvjq/sidvps.nauhyuh.top
-            git pull origin main
-            # Nếu là Node.js/PHP có thể thêm các lệnh restart dưới đây
-            # npm install
-            # pm2 restart all
+            git pull
+
