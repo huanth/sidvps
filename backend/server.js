@@ -1,6 +1,14 @@
+const express = require('express');
+const session = require('express-session');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const { exec, spawn } = require('child_process');
 const http = require('http');
 const WebSocket = require('ws');
 const pty = require('node-pty');
+const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,9 +22,22 @@ const getVersion = () => {
         const data = JSON.parse(fs.readFileSync(VERSION_PATH));
         return data.version;
     } catch (e) {
-        return '1.1.0';
+        return '1.2.0';
     }
 };
+
+// Multer Storage for Uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const targetDir = req.query.path || '/root';
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+        cb(null, targetDir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, file.originalname);
+    }
+});
+const upload = multer({ storage });
 
 // Middleware
 app.use(cors({ origin: true, credentials: true })); 
@@ -216,7 +237,120 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
     res.json({ success: true, message: `Installation of ${appName} started in background.` });
 });
 
-// 9. Update Trigger
+// 10. File Manager APIs
+app.get('/api/files/list', checkAuth, (req, res) => {
+    const targetDir = req.query.path || '/root';
+    if (!fs.existsSync(targetDir)) return res.status(404).json({ error: 'Path not found' });
+    
+    fs.readdir(targetDir, { withFileTypes: true }, (err, files) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const results = files.map(file => ({
+            name: file.name,
+            isDirectory: file.isDirectory(),
+            path: path.join(targetDir, file.name)
+        }));
+        res.json(results);
+    });
+});
+
+app.get('/api/files/read', checkAuth, (req, res) => {
+    const filePath = req.query.path;
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    fs.readFile(filePath, 'utf8', (err, data) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ content: data });
+    });
+});
+
+app.post('/api/files/write', checkAuth, (req, res) => {
+    const { path: filePath, content } = req.body;
+    fs.writeFile(filePath, content, 'utf8', (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/files/upload', checkAuth, upload.single('file'), (req, res) => {
+    // Multer handles the storage in its diskStorage config
+    res.json({ success: true, file: req.file });
+});
+
+app.post('/api/files/delete', checkAuth, (req, res) => {
+    const { path: targetPath } = req.body;
+    fs.rm(targetPath, { recursive: true, force: true }, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/files/rename', checkAuth, (req, res) => {
+    const { oldPath, newPath } = req.body;
+    fs.rename(oldPath, newPath, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/files/mkdir', checkAuth, (req, res) => {
+    const { path: targetDir } = req.body;
+    fs.mkdir(targetDir, { recursive: true }, (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+const DOMAINS_PATH = path.join(__dirname, 'domains.json');
+const getDomains = () => fs.existsSync(DOMAINS_PATH) ? JSON.parse(fs.readFileSync(DOMAINS_PATH)) : [];
+const saveDomains = (domains) => fs.writeFileSync(DOMAINS_PATH, JSON.stringify(domains));
+
+// 11. Domain & SSL APIs
+app.get('/api/domains/list', checkAuth, (req, res) => {
+    res.json(getDomains());
+});
+
+app.post('/api/domains/add', checkAuth, (req, res) => {
+    const { domain, root } = req.body;
+    if (!domain || !root) return res.status(400).json({ error: 'Domain and Root are required' });
+    
+    // 1. Create Nginx config (Mocking for now, in reality write to /etc/nginx/sites-available)
+    const nginxConfig = `
+server {
+    listen 80;
+    server_name ${domain};
+    root ${root};
+    index index.html index.php;
+    
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}`;
+    const configPath = `/etc/nginx/sites-enabled/${domain}`;
+    // exec(`echo "${nginxConfig}" | sudo tee ${configPath} && sudo nginx -s reload`, (err) => { ... })
+    
+    const domains = getDomains();
+    domains.push({ domain, root, ssl: false, created_at: new Date().toISOString() });
+    saveDomains(domains);
+    
+    res.json({ success: true, message: `Domain ${domain} added. Nginx config generated.` });
+});
+
+app.post('/api/domains/ssl', checkAuth, (req, res) => {
+    const { domain } = req.body;
+    // Trigger certbot
+    const cmd = `sudo certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}`;
+    exec(cmd, (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr });
+        
+        const domains = getDomains();
+        const d = domains.find(x => x.domain === domain);
+        if (d) d.ssl = true;
+        saveDomains(domains);
+        
+        res.json({ success: true, message: `SSL enabled for ${domain}.` });
+    });
+});
+
+// 12. Update Trigger
 app.post('/api/system/update', checkAuth, (req, res) => {
     console.log('[Update] Triggering system update...');
     const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';

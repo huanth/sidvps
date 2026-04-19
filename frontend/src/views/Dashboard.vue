@@ -13,6 +13,12 @@
         <router-link to="/apps" class="nav-item">
           <i class="fa-solid fa-cubes"></i> App Stack
         </router-link>
+        <router-link to="/files" class="nav-item">
+          <i class="fa-solid fa-folder-open"></i> File Manager
+        </router-link>
+        <router-link to="/domains" class="nav-item">
+          <i class="fa-solid fa-globe"></i> Domains
+        </router-link>
         <router-link to="/terminal" class="nav-item">
           <i class="fa-solid fa-terminal"></i> Terminal
         </router-link>
