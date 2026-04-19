@@ -2,7 +2,7 @@
   <div class="admin-container">
     <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="sidebar-logo">SidVPS Admin</div>
+      <div class="sidebar-logo">SidVPS Admin ✨</div>
       <nav class="sidebar-nav">
         <router-link to="/" class="nav-item active">
           <i class="fa-solid fa-house"></i> Overview

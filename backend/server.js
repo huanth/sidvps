@@ -382,4 +382,6 @@ if (fs.existsSync(frontendDist)) {
     app.get('*', (req, res) => res.send('API Backend is running. Frontend Vue builds missing!'));
 }
 
-server.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API + WS server running on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Backend] SidVPS v1.2.0 - Cosmic Explorer - Running on ${PORT} ✨`);
+});
