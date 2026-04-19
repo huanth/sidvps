@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SidVPS - Premium Cloud Solutions</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #00f2fe;
+            --secondary: #4facfe;
+            --bg: #050a12;
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --border: rgba(255, 255, 255, 0.1);
+            --text-glow: 0 0 15px rgba(0, 242, 254, 0.5);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: #fff;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        /* Ambient Background Shadows */
+        .ambient-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+        .blob {
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: radial-gradient(circle, rgba(79, 172, 254, 0.15) 0%, transparent 70%);
+            border-radius: 50%;
+            filter: blur(80px);
+            animation: move 20s infinite alternate;
+        }
+        .blob-1 { top: -100px; right: -100px; }
+        .blob-2 { bottom: -100px; left: -100px; background: radial-gradient(circle, rgba(0, 242, 254, 0.1) 0%, transparent 70%); }
+
+        @keyframes move {
+            from { transform: translate(0, 0); }
+            to { transform: translate(100px, 100px); }
+        }
+
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 30px 10%;
+            backdrop-filter: blur(10px);
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--border);
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(to right, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: var(--text-glow);
+        }
+        .nav-links a {
+            color: #ccc;
+            text-decoration: none;
+            margin-left: 30px;
+            font-weight: 400;
+            transition: 0.3s;
+            font-size: 15px;
+        }
+        .nav-links a:hover { color: var(--primary); }
+        .btn-portal {
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            color: #000;
+            padding: 10px 25px;
+            border-radius: 50px;
+            font-weight: 600;
+            transition: 0.3s;
+            text-shadow: none;
+        }
+        .btn-portal:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0, 242, 254, 0.4); }
+
+        /* Hero Section */
+        .hero {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 0 15%;
+            padding-top: 80px;
+        }
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            background: linear-gradient(to bottom, #fff, #888);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hero p {
+            font-size: 1.2rem;
+            color: #aaa;
+            max-width: 700px;
+            margin-bottom: 40px;
+        }
+
+        /* Install Command Area */
+        .command-wrap {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border);
+            padding: 15px 25px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            cursor: pointer;
+            transition: 0.3s;
+            position: relative;
+        }
+        .command-wrap:hover { border-color: var(--primary); background: rgba(0, 0, 0, 0.6); }
+        .command-text { color: var(--primary); }
+        .copy-icon { color: #555; font-size: 14px; }
+
+        /* Features */
+        .features {
+            padding: 100px 10%;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+        }
+        .f-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            padding: 40px;
+            border-radius: 24px;
+            transition: 0.3s;
+            backdrop-filter: blur(15px);
+        }
+        .f-card:hover { transform: translateY(-10px); border-color: var(--primary); }
+        .f-icon {
+            width: 50px;
+            height: 50px;
+            background: rgba(0, 242, 254, 0.1);
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+        .f-card h3 { margin-bottom: 15px; font-size: 20px; }
+        .f-card p { color: #888; font-size: 15px; }
+
+        footer {
+            padding: 50px 10%;
+            text-align: center;
+            border-top: 1px solid var(--border);
+            color: #555;
+            font-size: 14px;
+        }
+
+        /* Success Tooltip */
+        .tooltip {
+            position: absolute;
+            top: -40px;
+            background: var(--primary);
+            color: #000;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            opacity: 0;
+            transition: 0.3s;
+        }
+        .show-tooltip { opacity: 1; top: -50px; }
+
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .nav-links { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="ambient-bg">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <nav>
+        <div class="logo">SidVPS Hub</div>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#about">About</a>
+            <a href="/login" class="btn-portal">Dashboard Portal</a>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <h1>The Next Generation<br>Cloud Management</h1>
+        <p>Experience extreme speed and elegance in VPS management. Lightweight, secure, and designed for the modern cloud architect.</p>
+        
+        <div class="command-wrap" onclick="copyCommand()">
+            <span class="tooltip" id="myTooltip">Command Copied!</span>
+            <i class="fa-solid fa-terminal" style="color: #666;"></i>
+            <span class="command-text">curl -sL https://sidvps.nauhyuh.top/install.sh | bash</span>
+            <i class="fa-regular fa-copy copy-icon"></i>
+        </div>
+    </header>
+
+    <div class="features" id="features">
+        <div class="f-card">
+            <div class="f-icon"><i class="fa-solid fa-bolt-lightning"></i></div>
+            <h3>Extreme Speed</h3>
+            <p>Built with Node.js and Vue 3 for sub-second responses and real-time system monitoring.</p>
+        </div>
+        <div class="f-card">
+            <div class="f-icon"><i class="fa-solid fa-shield-halved"></i></div>
+            <h3>Ironclad Security</h3>
+            <p>Multi-layer security with session isolation and automated firewall management.</p>
+        </div>
+        <div class="f-card">
+            <div class="f-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+            <h3>Modern UI</h3>
+            <p>Premium glassmorphism aesthetics inspired by high-end digital luxury products.</p>
+        </div>
+    </div>
+
+    <footer>
+        <p>&copy; 2026 SidVPS Management. All rights reserved. Designed for professional cloud operators.</p>
+    </footer>
+
+    <script>
+        function copyCommand() {
+            const command = "curl -sL https://sidvps.nauhyuh.top/install.sh | bash";
+            navigator.clipboard.writeText(command);
+            
+            const tooltip = document.getElementById("myTooltip");
+            tooltip.classList.add("show-tooltip");
+            setTimeout(() => {
+                tooltip.classList.remove("show-tooltip");
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

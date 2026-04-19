@@ -10,6 +10,12 @@
         <router-link to="/management" class="nav-item active">
           <i class="fa-solid fa-server"></i> Services
         </router-link>
+        <router-link to="/apps" class="nav-item">
+          <i class="fa-solid fa-cubes"></i> App Stack
+        </router-link>
+        <router-link to="/terminal" class="nav-item">
+          <i class="fa-solid fa-terminal"></i> Terminal
+        </router-link>
         <router-link to="/settings" class="nav-item">
           <i class="fa-solid fa-gear"></i> Settings
         </router-link>

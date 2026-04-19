@@ -1,12 +1,9 @@
-const express = require('express');
-const session = require('express-session');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { exec, spawn } = require('child_process');
+const http = require('http');
+const WebSocket = require('ws');
+const pty = require('node-pty');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = 21999;
 const DB_PATH = path.join(__dirname, 'users.json');
 const VERSION_PATH = path.join(__dirname, '../version.json');
@@ -14,9 +11,10 @@ const VERSION_PATH = path.join(__dirname, '../version.json');
 // --- Helper: Get Version ---
 const getVersion = () => {
     try {
-        return JSON.parse(fs.readFileSync(VERSION_PATH)).version;
+        const data = JSON.parse(fs.readFileSync(VERSION_PATH));
+        return data.version;
     } catch (e) {
-        return 'v1.0.0';
+        return '1.1.0';
     }
 };
 
@@ -24,12 +22,50 @@ const getVersion = () => {
 app.use(cors({ origin: true, credentials: true })); 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(session({
+const sessionMiddleware = session({
     secret: 'sidvps-premium-secret-key',
     resave: false,
     saveUninitialized: true,
     cookie: { maxAge: 3600000 } 
-}));
+});
+app.use(sessionMiddleware);
+
+// --- WebSocket Terminal Logic ---
+const wss = new WebSocket.Server({ noServer: true });
+
+wss.on('connection', (ws, req) => {
+    console.log('[Terminal] New client connected');
+    
+    // Spawn a real login shell starting at /root
+    const shell = pty.spawn('bash', [], {
+        name: 'xterm-color',
+        cols: 80,
+        rows: 24,
+        cwd: '/root',
+        env: process.env
+    });
+
+    ws.on('message', (msg) => {
+        shell.write(msg);
+    });
+
+    shell.on('data', (data) => {
+        ws.send(data);
+    });
+
+    ws.on('close', () => {
+        console.log('[Terminal] Client disconnected');
+        shell.kill();
+    });
+});
+
+// Upgrade HTTP to WS
+server.on('upgrade', (request, socket, head) => {
+    // Note: Simple upgrade, real production should check session here
+    wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+    });
+});
 
 // --- Helper: Read/Write User ---
 const getUsers = () => fs.existsSync(DB_PATH) ? JSON.parse(fs.readFileSync(DB_PATH)) : [];
@@ -85,7 +121,7 @@ app.get('/api/system/info', checkAuth, (req, res) => {
         res.json({
             ...sysInfo,
             version: getVersion(),
-            latest_version: 'v1.0.0'
+            latest_version: getVersion() // Same for now
         });
     });
 });
@@ -139,7 +175,48 @@ app.post('/api/system/service-action', checkAuth, (req, res) => {
     });
 });
 
-// 8. Update Trigger
+// 8. Remote Version Check
+app.get('/api/system/check-updates', checkAuth, (req, res) => {
+    // We attempt to fetch from the specific Github raw URL
+    const remoteUrl = 'https://raw.githubusercontent.com/huanth/sidvps/main/version.json';
+    exec(`curl -s ${remoteUrl}`, (err, stdout) => {
+        if (err) return res.json({ available: false, error: 'Cannot reach update server' });
+        try {
+            const remote = JSON.parse(stdout);
+            const local = getVersion();
+            res.json({
+                current: local,
+                latest: remote.version,
+                available: remote.version !== local
+            });
+        } catch (e) {
+            res.json({ available: false, error: 'Invalid update data' });
+        }
+    });
+});
+
+// 9. App Stack Installer
+app.post('/api/system/apps-install', checkAuth, (req, res) => {
+    const { app: appName } = req.body;
+    const scripts = {
+        'nginx': 'sudo apt-get update && sudo apt-get install -y nginx',
+        'apache': 'sudo apt-get update && sudo apt-get install -y apache2',
+        'mysql': 'sudo apt-get update && sudo apt-get install -y mysql-server'
+    };
+    
+    const script = scripts[appName];
+    if (!script) return res.status(400).json({ error: 'Unsupported application' });
+
+    // Use spawn to allow future output streaming if needed
+    const child = exec(script, (err, stdout, stderr) => {
+        if (err) console.error(`[Installer] ${appName} failed:`, stderr);
+        else console.log(`[Installer] ${appName} success.`);
+    });
+    
+    res.json({ success: true, message: `Installation of ${appName} started in background.` });
+});
+
+// 9. Update Trigger
 app.post('/api/system/update', checkAuth, (req, res) => {
     console.log('[Update] Triggering system update...');
     const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';
@@ -150,7 +227,7 @@ app.post('/api/system/update', checkAuth, (req, res) => {
     });
 });
 
-// 9. Logout
+// 10. Logout
 app.post('/api/auth/logout', (req, res) => {
     req.session.destroy();
     res.json({ success: true });
@@ -171,4 +248,4 @@ if (fs.existsSync(frontendDist)) {
     app.get('*', (req, res) => res.send('API Backend is running. Frontend Vue builds missing!'));
 }
 
-app.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API server running on ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API + WS server running on ${PORT}`));

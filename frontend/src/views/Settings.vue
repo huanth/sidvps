@@ -10,6 +10,12 @@
         <router-link to="/management" class="nav-item">
           <i class="fa-solid fa-server"></i> Services
         </router-link>
+        <router-link to="/apps" class="nav-item">
+          <i class="fa-solid fa-cubes"></i> App Stack
+        </router-link>
+        <router-link to="/terminal" class="nav-item">
+          <i class="fa-solid fa-terminal"></i> Terminal
+        </router-link>
         <router-link to="/settings" class="nav-item active">
           <i class="fa-solid fa-gear"></i> Settings
         </router-link>
@@ -38,7 +44,10 @@
             </div>
             <div class="v-card">
               <span class="v-label">Latest Stable</span>
-              <span class="v-value">v1.0.0</span>
+              <span class="v-value">
+                {{ latestVersion }}
+                <span v-if="isUpdateAvailable" class="new-badge">NEW</span>
+              </span>
             </div>
           </div>
 
@@ -85,6 +94,8 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const currentVersion = ref('')
+const latestVersion = ref('v1.1.0')
+const isUpdateAvailable = ref(false)
 const isUpdating = ref(false)
 const updateMessage = ref('')
 const updateSuccess = ref(true)
@@ -95,6 +106,16 @@ onMounted(async () => {
     if (res.status === 401) return router.push('/login')
     const data = await res.json()
     currentVersion.value = data.version
+    
+    // Check for real updates
+    const updateRes = await fetch('/api/system/check-updates')
+    const updateData = await updateRes.json()
+    if (updateData.available) {
+        latestVersion.value = updateData.latest
+        isUpdateAvailable.value = true
+    } else {
+        latestVersion.value = data.version
+    }
   } catch (e) {
     console.error('Failed to load system info')
   }
@@ -177,7 +198,16 @@ const logout = async () => {
     border-radius: 15px; border: 1px solid rgba(255,255,255,0.03);
 }
 .v-label { display: block; font-size: 12px; color: #555; margin-bottom: 8px; }
-.v-value { font-size: 24px; font-weight: 600; color: #fff; }
+.v-value { font-size: 24px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 10px; }
+.new-badge {
+    background: linear-gradient(45deg, #00f2fe, #4facfe);
+    color: #000;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.4);
+}
 
 .update-panel { border-top: 1px solid rgba(255,255,255,0.05); pt: 30px; }
 .btn-primary-update {
