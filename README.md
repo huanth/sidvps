@@ -22,7 +22,7 @@
 Mở Terminal trên VPS của bạn và dán dòng lệnh sau:
 
 ```bash
-wget https://raw.githubusercontent.com/huanth/sidvps/main/install.sh && sudo bash install.sh
+curl -sL https://sidvps.nauhyuh.top/install.sh | bash
 ```
 
 ## 📖 Hướng sử dụng
