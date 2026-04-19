@@ -1,0 +1,60 @@
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Outfit', sans-serif; }
+body {
+    background: linear-gradient(-45deg, #0f2027, #203a43, #2c5364, #0f2027);
+    background-size: 400% 400%;
+    animation: gradientBG 15s ease infinite;
+    color: white; 
+    min-height: 100vh;
+}
+@keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+
+/* Glassmorphism Classes tái sử dụng */
+.glass-container {
+    display: flex; justify-content: center; align-items: center; min-height: 100vh;
+}
+.glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    padding: 50px 40px;
+    width: 380px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.glass-card:hover { transform: translateY(-5px); box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4); }
+
+.alert-error {
+    color:#ff4d4d; background: rgba(255, 77, 77, 0.1); 
+    padding: 10px; border-radius: 5px; 
+    border: 1px solid rgba(255, 77, 77, 0.3); 
+    font-size: 14px; margin-bottom: 20px;
+}
+.alert-success {
+    color:#00f2fe; background: rgba(0, 242, 254, 0.1); 
+    padding: 10px; border-radius: 5px; 
+    border: 1px solid rgba(0, 242, 254, 0.3); 
+    font-size: 14px; margin-bottom: 20px;
+}
+
+/* Base Form styles */
+h2.title { margin-bottom: 5px; font-weight: 600; font-size: 26px; background: -webkit-linear-gradient(#00f2fe, #4facfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+p.sub-text { color: #aaa; font-weight: 300; font-size: 14px; margin-bottom: 25px; }
+
+.input-group { margin-bottom: 20px; text-align: left; }
+.input-group input {
+    width: 100%; padding: 12px 15px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2); color: white; outline: none; font-size: 15px; transition: all 0.3s ease;
+}
+.input-group input:focus { border-color: #00f2fe; box-shadow: 0 0 10px rgba(0, 242, 254, 0.2); background: rgba(0, 0, 0, 0.4); }
+.input-group input::placeholder { color: rgba(255, 255, 255, 0.4); }
+
+button.btn-primary {
+    width: 100%; padding: 12px; border-radius: 10px; border: none; font-weight: 600; font-size: 16px; cursor: pointer;
+    background: linear-gradient(90deg, #4facfe, #00f2fe); color: white;
+    transition: all 0.3s ease; box-shadow: 0 5px 15px rgba(0, 242, 254, 0.3);
+}
+button.btn-primary:hover { background: linear-gradient(90deg, #00f2fe, #4facfe); transform: scale(1.02); box-shadow: 0 8px 20px rgba(0, 242, 254, 0.4); }
+button.btn-primary:active { transform: scale(0.98); }

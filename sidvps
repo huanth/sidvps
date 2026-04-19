@@ -1,0 +1,24 @@
+#!/bin/bash
+# Path: /home/dhqytvjq/sidvps.nauhyuh.top/sidvps
+
+show_menu() {
+    clear
+    echo -e "SIDVPS CLI MANAGER"
+    echo -e "------------------------------------"
+    echo -e "Web UI: http://$(curl -s ifconfig.me):21999"
+    echo -e "------------------------------------"
+    echo "1) Quản lý Nginx"
+    echo "2) Restart Dashboard"
+    echo "0) Thoát"
+    read -p "Chọn: " opt
+    case $opt in
+        2) sudo systemctl restart sidvps-ui && echo "Đã restart dashboard!"; sleep 1 ;;
+        0) exit 0 ;;
+    esac
+}
+
+if [[ "$1" == "--json" ]]; then
+    echo "{\"uptime\":\"$(uptime -p)\", \"ip\":\"$(curl -s ifconfig.me)\"}"
+else
+    show_menu
+fi
