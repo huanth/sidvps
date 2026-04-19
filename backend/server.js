@@ -3,29 +3,39 @@ const session = require('express-session');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
-const { exec } = require('child_process');
 const path = require('path');
+const { exec, spawn } = require('child_process');
 
 const app = express();
 const PORT = 21999;
 const DB_PATH = path.join(__dirname, 'users.json');
+const VERSION_PATH = path.join(__dirname, '../version.json');
+
+// --- Helper: Get Version ---
+const getVersion = () => {
+    try {
+        return JSON.parse(fs.readFileSync(VERSION_PATH)).version;
+    } catch (e) {
+        return 'v1.0.0';
+    }
+};
 
 // Middleware
-app.use(cors({ origin: true, credentials: true })); // Hỗ trợ frontend gọi API local
+app.use(cors({ origin: true, credentials: true })); 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(session({
     secret: 'sidvps-premium-secret-key',
     resave: false,
     saveUninitialized: true,
-    cookie: { maxAge: 3600000 } // 1 tiếng
+    cookie: { maxAge: 3600000 } 
 }));
 
-// --- Helper: Đọc/Ghi User ---
+// --- Helper: Read/Write User ---
 const getUsers = () => fs.existsSync(DB_PATH) ? JSON.parse(fs.readFileSync(DB_PATH)) : [];
 const saveUser = (user) => fs.writeFileSync(DB_PATH, JSON.stringify([user]));
 
-// --- Middleware kiểm tra Login ---
+// --- Middleware: Check Auth ---
 const checkAuth = (req, res, next) => {
     if (req.session.user) return next();
     res.status(401).json({ error: 'Unauthorized' });
@@ -33,13 +43,13 @@ const checkAuth = (req, res, next) => {
 
 // --- REST APIs ---
 
-// 1. Kiểm tra phải Setup không
+// 1. Check Setup
 app.get('/api/auth/check-setup', (req, res) => {
     const users = getUsers();
     res.json({ needsSetup: users.length === 0 });
 });
 
-// 2. Tái tạo Setup
+// 2. Setup
 app.post('/api/auth/setup', (req, res) => {
     if (getUsers().length > 0) return res.status(400).json({ error: 'Admin account already exists.' });
     const { user, pass } = req.body;
@@ -49,7 +59,7 @@ app.post('/api/auth/setup', (req, res) => {
     res.json({ success: true, message: 'Account created successfully.' });
 });
 
-// 3. Xử lý Login Trả về JSON
+// 3. Login
 app.post('/api/auth/login', (req, res) => {
     const { user, pass } = req.body;
     const admin = getUsers()[0];
@@ -61,43 +71,68 @@ app.post('/api/auth/login', (req, res) => {
     }
 });
 
-// 4. GET me (check session state FE)
+// 4. Me
 app.get('/api/auth/me', (req, res) => {
     if (req.session.user) res.json({ user: req.session.user });
     else res.status(401).json({ error: 'Not logged in' });
 });
 
-// 5. Logout
+// 5. System Info & Version
+app.get('/api/system/info', checkAuth, (req, res) => {
+    exec('sidvps --json', (err, stdout) => {
+        let sysInfo = {};
+        try { sysInfo = JSON.parse(stdout); } catch (e) { sysInfo = { uptime: 'N/A', ip: 'N/A' }; }
+        res.json({
+            ...sysInfo,
+            version: getVersion(),
+            latest_version: 'v1.0.0' // Mocking latest, in reality fetch from Github
+        });
+    });
+});
+
+// 6. Update Trigger
+app.post('/api/system/update', checkAuth, (req, res) => {
+    console.log('[Update] Triggering system update...');
+    // We run the update sequence in background
+    const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';
+    
+    exec(updateCmd, (err, stdout, stderr) => {
+        if (err) {
+            console.error('[Update Error]', stderr);
+            return res.json({ success: false, error: stderr });
+        }
+        console.log('[Update Success] System updated. Restarting in 5s...');
+        res.json({ success: true, message: 'Update success. System will restart.' });
+        
+        // Attempt restart after response
+        setTimeout(() => {
+            exec('sudo systemctl restart sidvps-ui');
+        }, 5000);
+    });
+});
+
+// 7. Logout
 app.post('/api/auth/logout', (req, res) => {
     req.session.destroy();
     res.json({ success: true });
 });
 
-// 6. Lấy dữ liệu hệ thống (Yêu cầu Login)
-app.get('/api/system/status', checkAuth, (req, res) => {
-    exec('sidvps --json', (err, stdout) => {
-        let sysInfo = {};
-        try { 
-            sysInfo = JSON.parse(stdout); 
-        } catch (e) { 
-            sysInfo = { uptime: 'Fake-Mock-Uptime', ip: '127.0.0.1' }; 
-        }
-        res.json(sysInfo);
-    });
+// --- Integration: Static Files ---
+
+const landingPage = path.join(__dirname, '../index.html');
+const frontendDist = path.join(__dirname, '../frontend/dist');
+
+// Serve Landing Page at /
+app.get('/', (req, res) => {
+    res.sendFile(landingPage);
 });
 
-// --- Tích hợp Frontend ---
-const frontendDist = path.join(__dirname, '../frontend/dist');
-if (fs.existsSync(frontendDist)) {
-    app.use(express.static(frontendDist));
-    
-    // Fallback cho Vue-Router HTML5 mode
-    app.get('*', (req, res) => {
-        res.sendFile(path.join(frontendDist, 'index.html'));
-    });
-} else {
-    // Để quá trình dev BE không bị lỗi báo 404
-    app.get('*', (req, res) => res.send('API Backend is running. Frontend Vue builds missing!'));
-}
+// Serve Vue Dashboard at /dashboard
+app.use('/dashboard', express.static(frontendDist));
+
+// Fallback for Vue Router (within /dashboard)
+app.get('/dashboard/*', (req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+});
 
 app.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API server running on ${PORT}`));

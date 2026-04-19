@@ -3,6 +3,9 @@
     <div class="header">
       <div class="logo">SidVPS Dashboard</div>
       <div class="user-info">
+        <router-link to="/settings" class="btn-settings" title="Settings">
+            <i class="fa-solid fa-cog"></i>
+        </router-link>
         <span class="user-name">Welcome, <b>{{ user.username }}</b> (Admin)</span>
         <button @click="logout" class="btn-logout">Sign Out</button>
       </div>
@@ -23,14 +26,15 @@
     </div>
     
     <div class="footer">
-      &copy; 2026 SidVPS Manager. Vue SPA Interface.
+      &copy; 2026 SidVPS Manager. Vue SPA Interface. <br>
+      <small v-if="sysInfo">Version: {{ sysInfo.version || 'v1.0.0' }}</small>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, RouterLink } from 'vue-router'
 
 const router = useRouter()
 const user = ref(null)
@@ -38,14 +42,14 @@ const sysInfo = ref(null)
 
 onMounted(async () => {
   try {
-    // 1. Kiểm tra đăng nhập
+    // 1. Check Login
     const meRes = await fetch('/api/auth/me')
     if (!meRes.ok) throw new Error('Not logged in')
     const meData = await meRes.json()
     user.value = meData.user
 
-    // 2. Tải System info
-    const sysRes = await fetch('/api/system/status')
+    // 2. Load System info
+    const sysRes = await fetch('/api/system/info')
     if (sysRes.ok) {
       sysInfo.value = await sysRes.json()
     }
@@ -69,6 +73,8 @@ const logout = async () => {
     .header { flex-direction: column; gap: 20px; text-align: center; }
     .user-info { flex-direction: column; }
 }
+.btn-settings { color: #888; font-size: 20px; transition: 0.3s; padding: 10px; }
+.btn-settings:hover { color: #fff; transform: rotate(45deg); }
 .user-name { font-weight: 300; color: #ccc; }
 .user-name b { color: #fff; font-weight: 600; }
 .btn-logout { background: rgba(255, 77, 77, 0.1); color: #ff4d4d; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; transition: all 0.3s ease; border: 1px solid rgba(255, 77, 77, 0.3); cursor:pointer; }
