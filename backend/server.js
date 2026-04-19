@@ -119,20 +119,17 @@ app.post('/api/auth/logout', (req, res) => {
 
 // --- Integration: Static Files ---
 
-const landingPage = path.join(__dirname, '../index.html');
 const frontendDist = path.join(__dirname, '../frontend/dist');
 
-// Serve Landing Page at /
-app.get('/', (req, res) => {
-    res.sendFile(landingPage);
-});
-
-// Serve Vue Dashboard at /dashboard
-app.use('/dashboard', express.static(frontendDist));
-
-// Fallback for Vue Router (within /dashboard)
-app.get('/dashboard/*', (req, res) => {
-    res.sendFile(path.join(frontendDist, 'index.html'));
-});
+if (fs.existsSync(frontendDist)) {
+    app.use(express.static(frontendDist));
+    
+    // Fallback for Vue Router
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+} else {
+    app.get('*', (req, res) => res.send('API Backend is running. Frontend Vue builds missing!'));
+}
 
 app.listen(PORT, '0.0.0.0', () => console.log(`[Backend] API server running on ${PORT}`));
