@@ -13,20 +13,36 @@
         <div class="input-group">
           <input type="password" v-model="password" placeholder="Enter Password" required>
         </div>
-        <button type="submit" class="btn-primary">Start Using Now</button>
+        <div class="input-group">
+          <input type="email" v-model="email" placeholder="Enter Admin Email (For Alerts/License)" required>
+        </div>
+        <div class="input-group">
+          <input type="text" v-model="serverIp" placeholder="Fetching Server IP..." disabled class="read-only-ip">
+        </div>
+        <button type="submit" class="btn-primary" :disabled="!serverIp">Start Using Now</button>
       </form>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const username = ref('')
 const password = ref('')
+const email = ref('')
+const serverIp = ref('')
 const errorMsg = ref('')
+
+onMounted(async () => {
+    try {
+        const res = await fetch('/api/system/ip')
+        const data = await res.json()
+        serverIp.value = data.ip || 'Unknown'
+    } catch(e) { serverIp.value = 'Unknown' }
+})
 
 const handleSetup = async () => {
   errorMsg.value = ''
@@ -34,7 +50,7 @@ const handleSetup = async () => {
     const res = await fetch('/api/auth/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: username.value, pass: password.value })
+      body: JSON.stringify({ user: username.value, pass: password.value, email: email.value, ip: serverIp.value })
     })
     
     const data = await res.json()

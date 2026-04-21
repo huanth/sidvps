@@ -10,11 +10,33 @@ const http = require('http');
 const WebSocket = require('ws');
 const pty = require('node-pty');
 const multer = require('multer');
+const Database = require('better-sqlite3');
 
 const app = express();
 const server = http.createServer(app);
 const PORT = 21999;
-const DB_PATH = path.join(__dirname, 'users.json');
+
+const db = new Database(path.join(__dirname, 'sidvps.db'));
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    salt TEXT,
+    hash TEXT,
+    password TEXT,     -- Fallback for legacy plain-text
+    email TEXT,
+    server_ip TEXT,
+    role TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT UNIQUE NOT NULL,
+    root TEXT NOT NULL,
+    ssl BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
 const VERSION_PATH = path.join(__dirname, '../version.json');
 
 // --- Helper: Get Version ---
@@ -97,9 +119,11 @@ server.on('upgrade', (request, socket, head) => {
     });
 });
 
-// --- Helper: Read/Write User ---
-const getUsers = () => fs.existsSync(DB_PATH) ? JSON.parse(fs.readFileSync(DB_PATH)) : [];
-const saveUser = (user) => fs.writeFileSync(DB_PATH, JSON.stringify([user]));
+// --- Helper: Read/Write User (SQLite) ---
+const getAdmin = () => db.prepare("SELECT * FROM users WHERE role = 'root' LIMIT 1").get();
+const getUserByName = (username) => db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+const saveUser = (user) => db.prepare('INSERT INTO users (username, email, server_ip, salt, hash, role) VALUES (@username, @email, @server_ip, @salt, @hash, @role)').run(user);
+const updateLegacyUser = (username, salt, hash) => db.prepare('UPDATE users SET salt = @salt, hash = @hash WHERE username = @username').run({ username, salt, hash });
 
 // --- Middleware: Check Auth ---
 const checkAuth = (req, res, next) => {
@@ -123,33 +147,38 @@ const verifyPassword = (password, hash, salt) => {
 
 // 1. Check Setup
 app.get('/api/auth/check-setup', (req, res) => {
-    const users = getUsers();
-    res.json({ needsSetup: users.length === 0 });
+    res.json({ needsSetup: !getAdmin() });
+});
+
+app.get('/api/system/ip', (req, res) => {
+    require('child_process').exec('curl -s ifconfig.me', (err, stdout) => {
+        res.json({ ip: err ? '127.0.0.1' : stdout.trim() });
+    });
 });
 
 // 2. Setup
 app.post('/api/auth/setup', (req, res) => {
-    if (getUsers().length > 0) return res.status(400).json({ error: 'Admin account already exists.' });
-    const { user, pass } = req.body;
-    if (!user || !pass) return res.status(400).json({ error: 'Invalid data.' });
+    if (getAdmin()) return res.status(400).json({ error: 'Admin account already exists.' });
+    const { user, pass, email, ip } = req.body;
+    if (!user || !pass || !email) return res.status(400).json({ error: 'Invalid data. Email is required.' });
 
     const { salt, hash } = hashPassword(pass);
-    saveUser({ username: user, salt, hash, role: 'root' });
+    saveUser({ username: user, email, server_ip: ip, salt, hash, role: 'root' });
     res.json({ success: true, message: 'Account created successfully.' });
 });
 
 // 3. Login
 app.post('/api/auth/login', (req, res) => {
     const { user, pass } = req.body;
-    const admin = getUsers()[0];
+    const admin = getUserByName(user);
 
-    if (admin && admin.username === user && admin.salt && admin.hash && verifyPassword(pass, admin.hash, admin.salt)) {
+    if (admin && admin.salt && admin.hash && verifyPassword(pass, admin.hash, admin.salt)) {
         req.session.user = { username: admin.username, role: admin.role };
         res.json({ success: true, user: req.session.user });
-    } else if (admin && admin.username === user && admin.password === pass && !admin.salt) {
+    } else if (admin && admin.password === pass && !admin.salt) {
         // Fallback & Auto-migration for legacy plain-text
         const { salt, hash } = hashPassword(pass);
-        saveUser({ username: admin.username, salt, hash, role: admin.role });
+        updateLegacyUser(admin.username, salt, hash);
         req.session.user = { username: admin.username, role: admin.role };
         res.json({ success: true, user: req.session.user });
     } else {
@@ -358,13 +387,14 @@ app.post('/api/files/mkdir', checkAuth, (req, res) => {
     });
 });
 
-const DOMAINS_PATH = path.join(__dirname, 'domains.json');
-const getDomains = () => fs.existsSync(DOMAINS_PATH) ? JSON.parse(fs.readFileSync(DOMAINS_PATH)) : [];
-const saveDomains = (domains) => fs.writeFileSync(DOMAINS_PATH, JSON.stringify(domains));
+// --- Helper: Domains Storage (SQLite) ---
+const getDomains = () => db.prepare('SELECT * FROM domains').all();
+const addDomain = (domain) => db.prepare('INSERT INTO domains (domain, root, ssl, created_at) VALUES (@domain, @root, 0, datetime("now"))').run(domain);
+const updateDomainSSL = (domainName) => db.prepare('UPDATE domains SET ssl = 1 WHERE domain = ?').run(domainName);
 
 // 11. Domain & SSL APIs
 app.get('/api/domains/list', checkAuth, (req, res) => {
-    res.json(getDomains());
+    res.json(getDomains().map(d => ({ ...d, ssl: d.ssl === 1 })));
 });
 
 app.post('/api/domains/add', checkAuth, (req, res) => {
@@ -386,11 +416,12 @@ server {
     const configPath = `/etc/nginx/sites-enabled/${domain}`;
     // exec(`echo "${nginxConfig}" | sudo tee ${configPath} && sudo nginx -s reload`, (err) => { ... })
 
-    const domains = getDomains();
-    domains.push({ domain, root, ssl: false, created_at: new Date().toISOString() });
-    saveDomains(domains);
-
-    res.json({ success: true, message: `Domain ${domain} added. Nginx config generated.` });
+    try {
+        addDomain({ domain, root });
+        res.json({ success: true, message: `Domain ${domain} added. Nginx config generated.` });
+    } catch (e) {
+        res.status(400).json({ error: 'Domain already exists or DB error.' });
+    }
 });
 
 app.post('/api/domains/ssl', checkAuth, (req, res) => {
@@ -400,11 +431,7 @@ app.post('/api/domains/ssl', checkAuth, (req, res) => {
     exec(cmd, (err, stdout, stderr) => {
         if (err) return res.status(500).json({ error: stderr });
 
-        const domains = getDomains();
-        const d = domains.find(x => x.domain === domain);
-        if (d) d.ssl = true;
-        saveDomains(domains);
-
+        updateDomainSSL(domain);
         res.json({ success: true, message: `SSL enabled for ${domain}.` });
     });
 });
