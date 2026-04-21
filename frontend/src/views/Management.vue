@@ -71,6 +71,45 @@
         </div>
       </div>
       
+      <!-- Process Management Section -->
+      <div class="processes-section">
+        <header class="section-header">
+          <h2>Top Processes</h2>
+          <button @click="fetchProcesses" class="btn-refresh"><i class="fa-solid fa-rotate-right"></i></button>
+        </header>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>PID</th>
+                <th>User</th>
+                <th>CPU %</th>
+                <th>Mem %</th>
+                <th>Command</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="proc in processes" :key="proc.pid">
+                <td>{{ proc.pid }}</td>
+                <td>{{ proc.user }}</td>
+                <td><span :class="{'high-cpu': proc.cpu > 50}">{{ proc.cpu }}%</span></td>
+                <td>{{ proc.mem }}%</td>
+                <td class="cmd-cell" :title="proc.command">{{ proc.command }}</td>
+                <td>
+                  <button @click="killProcess(proc.pid, proc.command)" class="btn-kill" title="Kill Process">
+                    <i class="fa-solid fa-skull"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="processes.length === 0">
+                <td colspan="6" class="text-center">Loading processes...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
       <div v-if="message" class="toast" :class="messageType">
         {{ message }}
       </div>
@@ -84,6 +123,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const services = ref([])
+const processes = ref([])
 const message = ref('')
 const messageType = ref('success')
 
@@ -95,7 +135,18 @@ const fetchServices = async () => {
     } catch (e) { console.error(e) }
 }
 
-onMounted(fetchServices)
+const fetchProcesses = async () => {
+    try {
+        const res = await fetch('/api/system/processes')
+        if (res.status === 401) return router.push('/login')
+        processes.value = await res.json()
+    } catch (e) { console.error(e) }
+}
+
+onMounted(() => {
+    fetchServices()
+    fetchProcesses()
+})
 
 const handleAction = async (service, action) => {
     message.value = `Executing ${action} on ${service}...`
@@ -125,6 +176,32 @@ const handleAction = async (service, action) => {
 const logout = async () => {
   await fetch('/api/auth/logout', { method: 'POST' })
   router.push('/login')
+}
+
+const killProcess = async (pid, command) => {
+    if(!confirm(`Are you sure you want to kill process ${pid} (${command})?`)) return;
+    message.value = `Killing process ${pid}...`
+    messageType.value = 'info'
+    try {
+        const res = await fetch('/api/system/process-kill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pid })
+        })
+        const data = await res.json()
+        if (data.success) {
+            message.value = data.message
+            messageType.value = 'success'
+            fetchProcesses()
+        } else {
+            message.value = data.error
+            messageType.value = 'error'
+        }
+    } catch (e) {
+        message.value = 'Kill failed.'
+        messageType.value = 'error'
+    }
+    setTimeout(() => { message.value = '' }, 3000)
 }
 </script>
 
@@ -227,6 +304,24 @@ const logout = async () => {
 .btn-svc.start:hover { border-color: #00ff00; color: #00ff00; }
 .btn-svc.stop:hover { border-color: #ff4d4d; color: #ff4d4d; }
 .btn-svc.restart:hover { border-color: #4facfe; color: #4facfe; }
+
+/* Processes Section */
+.processes-section { margin-top: 50px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.section-header h2 { font-size: 24px; font-weight: 600; }
+.btn-refresh { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 8px; padding: 8px 15px; cursor: pointer; transition: 0.3s; }
+.btn-refresh:hover { background: rgba(255,255,255,0.1); color: #00f2fe; }
+
+.table-container { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 15px; overflow: hidden; }
+.data-table { width: 100%; border-collapse: collapse; text-align: left; }
+.data-table th, .data-table td { padding: 15px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.data-table th { color: #888; font-weight: 500; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+.data-table tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+.cmd-cell { max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: monospace; color: #aaa; }
+.high-cpu { color: #ff4d4d; font-weight: bold; }
+.btn-kill { background: rgba(255, 77, 77, 0.1); border: 1px solid rgba(255, 77, 77, 0.2); color: #ff4d4d; border-radius: 6px; padding: 6px 12px; cursor: pointer; transition: 0.3s; }
+.btn-kill:hover { background: #ff4d4d; color: #fff; }
+.text-center { text-align: center; color: #666; }
 
 /* Toast */
 .toast {

@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -22,7 +23,7 @@ const getVersion = () => {
         const data = JSON.parse(fs.readFileSync(VERSION_PATH));
         return data.version;
     } catch (e) {
-        return '1.2.0';
+        return '1.3.0';
     }
 };
 
@@ -40,14 +41,14 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Middleware
-app.use(cors({ origin: true, credentials: true })); 
+app.use(cors({ origin: true, credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const sessionMiddleware = session({
     secret: 'sidvps-premium-secret-key',
     resave: false,
     saveUninitialized: true,
-    cookie: { maxAge: 3600000 } 
+    cookie: { maxAge: 3600000 }
 });
 app.use(sessionMiddleware);
 
@@ -56,7 +57,7 @@ const wss = new WebSocket.Server({ noServer: true });
 
 wss.on('connection', (ws, req) => {
     console.log('[Terminal] New client connected');
-    
+
     // Spawn a real login shell starting at /root
     const shell = pty.spawn('bash', [], {
         name: 'xterm-color',
@@ -82,9 +83,17 @@ wss.on('connection', (ws, req) => {
 
 // Upgrade HTTP to WS
 server.on('upgrade', (request, socket, head) => {
-    // Note: Simple upgrade, real production should check session here
-    wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
+    // Check session before upgrading
+    sessionMiddleware(request, {}, () => {
+        if (!request.session.user) {
+            console.log('[Terminal] Unauthorized WS connection attempt');
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
     });
 });
 
@@ -100,6 +109,18 @@ const checkAuth = (req, res, next) => {
 
 // --- REST APIs ---
 
+// --- Helper: Passwords ---
+const hashPassword = (password) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return { salt, hash };
+};
+
+const verifyPassword = (password, hash, salt) => {
+    const checkHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return checkHash === hash;
+};
+
 // 1. Check Setup
 app.get('/api/auth/check-setup', (req, res) => {
     const users = getUsers();
@@ -111,8 +132,9 @@ app.post('/api/auth/setup', (req, res) => {
     if (getUsers().length > 0) return res.status(400).json({ error: 'Admin account already exists.' });
     const { user, pass } = req.body;
     if (!user || !pass) return res.status(400).json({ error: 'Invalid data.' });
-    
-    saveUser({ username: user, password: pass, role: 'root' });
+
+    const { salt, hash } = hashPassword(pass);
+    saveUser({ username: user, salt, hash, role: 'root' });
     res.json({ success: true, message: 'Account created successfully.' });
 });
 
@@ -120,7 +142,14 @@ app.post('/api/auth/setup', (req, res) => {
 app.post('/api/auth/login', (req, res) => {
     const { user, pass } = req.body;
     const admin = getUsers()[0];
-    if (admin && admin.username === user && admin.password === pass) {
+
+    if (admin && admin.username === user && admin.salt && admin.hash && verifyPassword(pass, admin.hash, admin.salt)) {
+        req.session.user = { username: admin.username, role: admin.role };
+        res.json({ success: true, user: req.session.user });
+    } else if (admin && admin.username === user && admin.password === pass && !admin.salt) {
+        // Fallback & Auto-migration for legacy plain-text
+        const { salt, hash } = hashPassword(pass);
+        saveUser({ username: admin.username, salt, hash, role: admin.role });
         req.session.user = { username: admin.username, role: admin.role };
         res.json({ success: true, user: req.session.user });
     } else {
@@ -196,6 +225,36 @@ app.post('/api/system/service-action', checkAuth, (req, res) => {
     });
 });
 
+// 7.1 Process Management
+app.get('/api/system/processes', checkAuth, (req, res) => {
+    // Get top 50 processes by CPU usage
+    const cmd = `ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 51 | tail -n +2`;
+    exec(cmd, (err, stdout) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const lines = stdout.trim().split('\n');
+        const processes = lines.map(line => {
+            const parts = line.trim().split(/\s+/);
+            return {
+                pid: parts[0],
+                user: parts[1],
+                cpu: parts[2],
+                mem: parts[3],
+                command: parts.slice(4).join(' ')
+            };
+        });
+        res.json(processes);
+    });
+});
+
+app.post('/api/system/process-kill', checkAuth, (req, res) => {
+    const { pid } = req.body;
+    if (!pid || isNaN(pid)) return res.status(400).json({ error: 'Invalid PID' });
+    exec(`sudo kill -9 ${pid}`, (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr || err.message });
+        res.json({ success: true, message: `Process ${pid} killed.` });
+    });
+});
+
 // 8. Remote Version Check
 app.get('/api/system/check-updates', checkAuth, (req, res) => {
     // We attempt to fetch from the specific Github raw URL
@@ -224,7 +283,7 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
         'apache': 'sudo apt-get update && sudo apt-get install -y apache2',
         'mysql': 'sudo apt-get update && sudo apt-get install -y mysql-server'
     };
-    
+
     const script = scripts[appName];
     if (!script) return res.status(400).json({ error: 'Unsupported application' });
 
@@ -233,7 +292,7 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
         if (err) console.error(`[Installer] ${appName} failed:`, stderr);
         else console.log(`[Installer] ${appName} success.`);
     });
-    
+
     res.json({ success: true, message: `Installation of ${appName} started in background.` });
 });
 
@@ -241,7 +300,7 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
 app.get('/api/files/list', checkAuth, (req, res) => {
     const targetDir = req.query.path || '/root';
     if (!fs.existsSync(targetDir)) return res.status(404).json({ error: 'Path not found' });
-    
+
     fs.readdir(targetDir, { withFileTypes: true }, (err, files) => {
         if (err) return res.status(500).json({ error: err.message });
         const results = files.map(file => ({
@@ -311,7 +370,7 @@ app.get('/api/domains/list', checkAuth, (req, res) => {
 app.post('/api/domains/add', checkAuth, (req, res) => {
     const { domain, root } = req.body;
     if (!domain || !root) return res.status(400).json({ error: 'Domain and Root are required' });
-    
+
     // 1. Create Nginx config (Mocking for now, in reality write to /etc/nginx/sites-available)
     const nginxConfig = `
 server {
@@ -326,11 +385,11 @@ server {
 }`;
     const configPath = `/etc/nginx/sites-enabled/${domain}`;
     // exec(`echo "${nginxConfig}" | sudo tee ${configPath} && sudo nginx -s reload`, (err) => { ... })
-    
+
     const domains = getDomains();
     domains.push({ domain, root, ssl: false, created_at: new Date().toISOString() });
     saveDomains(domains);
-    
+
     res.json({ success: true, message: `Domain ${domain} added. Nginx config generated.` });
 });
 
@@ -340,12 +399,12 @@ app.post('/api/domains/ssl', checkAuth, (req, res) => {
     const cmd = `sudo certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}`;
     exec(cmd, (err, stdout, stderr) => {
         if (err) return res.status(500).json({ error: stderr });
-        
+
         const domains = getDomains();
         const d = domains.find(x => x.domain === domain);
         if (d) d.ssl = true;
         saveDomains(domains);
-        
+
         res.json({ success: true, message: `SSL enabled for ${domain}.` });
     });
 });
@@ -373,7 +432,7 @@ const frontendDist = path.join(__dirname, '../frontend/dist');
 
 if (fs.existsSync(frontendDist)) {
     app.use(express.static(frontendDist));
-    
+
     // Fallback for Vue Router
     app.get('*', (req, res) => {
         res.sendFile(path.join(frontendDist, 'index.html'));
@@ -383,5 +442,5 @@ if (fs.existsSync(frontendDist)) {
 }
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Backend] SidVPS v1.2.0 - Cosmic Explorer - Running on ${PORT} ✨`);
+    console.log(`[Backend] SidVPS v1.3.0 - Cosmic Explorer - Running on ${PORT} ✨`);
 });
