@@ -1,37 +1,6 @@
 <template>
   <div class="admin-container">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">SidVPS Admin</div>
-      <nav class="sidebar-nav">
-        <router-link to="/" class="nav-item">
-          <i class="fa-solid fa-house"></i> Overview
-        </router-link>
-        <router-link to="/management" class="nav-item">
-          <i class="fa-solid fa-server"></i> Services
-        </router-link>
-        <router-link to="/apps" class="nav-item">
-          <i class="fa-solid fa-cubes"></i> App Stack
-        </router-link>
-        <router-link to="/files" class="nav-item active">
-          <i class="fa-solid fa-folder-open"></i> File Manager
-        </router-link>
-        <router-link to="/domains" class="nav-item">
-          <i class="fa-solid fa-globe"></i> Domains
-        </router-link>
-        <router-link to="/terminal" class="nav-item">
-          <i class="fa-solid fa-terminal"></i> Terminal
-        </router-link>
-        <router-link to="/settings" class="nav-item">
-          <i class="fa-solid fa-gear"></i> Settings
-        </router-link>
-      </nav>
-      <div class="sidebar-footer">
-        <button @click="logout" class="btn-logout-sidebar">
-          <i class="fa-solid fa-right-from-bracket"></i> Logout
-        </button>
-      </div>
-    </aside>
+    <Sidebar />
 
     <!-- Main Content -->
     <main class="main-content fm-page">
@@ -115,6 +84,7 @@
 </template>
 
 <script setup>
+import Sidebar from '../components/Sidebar.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
@@ -272,10 +242,7 @@ const getLanguage = (filename) => {
     return map[ext] || 'plaintext'
 }
 
-const logout = async () => {
-  await fetch('/api/auth/logout', { method: 'POST' })
-  router.push('/login')
-}
+
 </script>
 
 <style scoped>

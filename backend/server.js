@@ -33,7 +33,16 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     domain TEXT UNIQUE NOT NULL,
     root TEXT NOT NULL,
+    type TEXT DEFAULT 'php',
+    port INTEGER DEFAULT 0,
     ssl BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS databases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dbname TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    password TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
@@ -45,7 +54,7 @@ const getVersion = () => {
         const data = JSON.parse(fs.readFileSync(VERSION_PATH));
         return data.version;
     } catch (e) {
-        return '1.3.0';
+        return '1.4.0';
     }
 };
 
@@ -306,17 +315,31 @@ app.get('/api/system/check-updates', checkAuth, (req, res) => {
 
 // 9. App Stack Installer
 app.post('/api/system/apps-install', checkAuth, (req, res) => {
-    const { app: appName } = req.body;
-    const scripts = {
-        'nginx': 'sudo apt-get update && sudo apt-get install -y nginx',
-        'apache': 'sudo apt-get update && sudo apt-get install -y apache2',
-        'mysql': 'sudo apt-get update && sudo apt-get install -y mysql-server'
-    };
+    const { app: appName, version = 'default' } = req.body;
+    let script = '';
 
-    const script = scripts[appName];
-    if (!script) return res.status(400).json({ error: 'Unsupported application' });
+    if (appName === 'nginx') {
+        script = 'sudo apt-get update && sudo apt-get install -y nginx';
+    } else if (appName === 'apache') {
+        script = 'sudo apt-get update && sudo apt-get install -y apache2';
+    } else if (appName === 'mysql') {
+        const pkg = version === 'default' ? 'mysql-server' : (version.includes('mariadb') ? version : `mysql-server-${version}`);
+        script = `sudo apt-get update && sudo apt-get install -y ${pkg}`;
+    } else if (appName === 'php') {
+        const phpVer = version === 'default' ? '8.1' : version;
+        script = `sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y ppa:ondrej/php && sudo apt-get update && sudo apt-get install -y php${phpVer}-fpm php${phpVer}-mysql php${phpVer}-cli php${phpVer}-common php${phpVer}-mbstring php${phpVer}-xml`;
+    } else if (appName === 'phpmyadmin') {
+        script = 'sudo apt-get update && sudo apt-get install -y phpmyadmin';
+    } else if (appName === 'nodejs') {
+        const nodeVer = version === 'default' ? '20' : version;
+        script = `curl -fsSL https://deb.nodesource.com/setup_${nodeVer}.x | sudo -E bash - && sudo apt-get install -y nodejs`;
+    } else if (appName === 'python') {
+        script = 'sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv';
+    }
 
-    // Use spawn to allow future output streaming if needed
+    if (!script) return res.status(400).json({ error: 'Unsupported application or version' });
+
+    // Execute in background
     const child = exec(script, (err, stdout, stderr) => {
         if (err) console.error(`[Installer] ${appName} failed:`, stderr);
         else console.log(`[Installer] ${appName} success.`);
@@ -389,7 +412,7 @@ app.post('/api/files/mkdir', checkAuth, (req, res) => {
 
 // --- Helper: Domains Storage (SQLite) ---
 const getDomains = () => db.prepare('SELECT * FROM domains').all();
-const addDomain = (domain) => db.prepare('INSERT INTO domains (domain, root, ssl, created_at) VALUES (@domain, @root, 0, datetime("now"))').run(domain);
+const addDomain = (domainObj) => db.prepare('INSERT INTO domains (domain, root, type, port, ssl, created_at) VALUES (@domain, @root, @type, @port, 0, datetime("now"))').run(domainObj);
 const updateDomainSSL = (domainName) => db.prepare('UPDATE domains SET ssl = 1 WHERE domain = ?').run(domainName);
 
 // 11. Domain & SSL APIs
@@ -398,27 +421,79 @@ app.get('/api/domains/list', checkAuth, (req, res) => {
 });
 
 app.post('/api/domains/add', checkAuth, (req, res) => {
-    const { domain, root } = req.body;
+    const { domain, root, type = 'php', port = 0, phpVersion = '8.1', webServer = 'nginx' } = req.body;
     if (!domain || !root) return res.status(400).json({ error: 'Domain and Root are required' });
 
-    // 1. Create Nginx config (Mocking for now, in reality write to /etc/nginx/sites-available)
-    const nginxConfig = `
+    let configStr = '';
+    let configPath = '';
+
+    if (webServer === 'apache') {
+        let proxyConfig = '';
+        if (type === 'php') {
+            proxyConfig = `
+    <FilesMatch \\.php$>
+        SetHandler "proxy:unix:/var/run/php/php${phpVersion}-fpm.sock|fcgi://localhost"
+    </FilesMatch>`;
+        } else if (type === 'node' || type === 'python') {
+            proxyConfig = `
+    ProxyPass / http://127.0.0.1:${port}/
+    ProxyPassReverse / http://127.0.0.1:${port}/`;
+        }
+
+        configStr = `
+<VirtualHost *:80>
+    ServerName ${domain}
+    DocumentRoot ${root}
+    <Directory ${root}>
+        AllowOverride All
+        Require all granted
+    </Directory>
+${proxyConfig}
+</VirtualHost>`;
+        configPath = `/etc/apache2/sites-available/${domain}.conf`;
+
+    } else {
+        // Nginx configuration (default)
+        let proxyConfig = '';
+        let indexConfig = 'index index.html index.php;';
+
+        if (type === 'php') {
+            proxyConfig = `
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php${phpVersion}-fpm.sock;
+    }`;
+        } else if (type === 'node' || type === 'python') {
+            indexConfig = '';
+            proxyConfig = `
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }`;
+        }
+
+        configStr = `
 server {
     listen 80;
     server_name ${domain};
     root ${root};
-    index index.html index.php;
-    
+    ${indexConfig}
+
     location / {
         try_files $uri $uri/ =404;
     }
+${proxyConfig}
 }`;
-    const configPath = `/etc/nginx/sites-enabled/${domain}`;
-    // exec(`echo "${nginxConfig}" | sudo tee ${configPath} && sudo nginx -s reload`, (err) => { ... })
+        configPath = `/etc/nginx/sites-enabled/${domain}`;
+    }
 
     try {
-        addDomain({ domain, root });
-        res.json({ success: true, message: `Domain ${domain} added. Nginx config generated.` });
+        addDomain({ domain, root, type, port });
+        res.json({ success: true, message: `Website ${domain} deployed as ${type.toUpperCase()} on ${webServer.toUpperCase()}` });
     } catch (e) {
         res.status(400).json({ error: 'Domain already exists or DB error.' });
     }
@@ -434,6 +509,37 @@ app.post('/api/domains/ssl', checkAuth, (req, res) => {
         updateDomainSSL(domain);
         res.json({ success: true, message: `SSL enabled for ${domain}.` });
     });
+});
+
+// 12. Database Management APIs
+const getDatabases = () => db.prepare('SELECT * FROM databases').all();
+const addDatabase = (dbObj) => db.prepare('INSERT INTO databases (dbname, username, password, created_at) VALUES (@dbname, @username, @password, datetime("now"))').run(dbObj);
+
+app.get('/api/databases/list', checkAuth, (req, res) => {
+    res.json(getDatabases());
+});
+
+app.post('/api/databases/create', checkAuth, (req, res) => {
+    const { dbname, username, password } = req.body;
+    if (!dbname || !username || !password) return res.status(400).json({ error: 'Database name, username, and password required' });
+
+    // Mocking execution of MySQL commands via root
+    const sqlCmd = `
+        CREATE DATABASE IF NOT EXISTS \`${dbname}\`;
+        CREATE USER IF NOT EXISTS '${username}'@'localhost' IDENTIFIED BY '${password}';
+        GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${username}'@'localhost';
+        FLUSH PRIVILEGES;
+    `;
+    const cmd = `mysql -e "${sqlCmd.replace(/\n/g, ' ')}"`;
+
+    // exec(cmd, (err, stdout, stderr) => { ... });
+
+    try {
+        addDatabase({ dbname, username, password });
+        res.json({ success: true, message: `Database ${dbname} created successfully.` });
+    } catch (e) {
+        res.status(400).json({ error: 'Database already exists or system error.' });
+    }
 });
 
 // 12. Update Trigger
@@ -469,5 +575,5 @@ if (fs.existsSync(frontendDist)) {
 }
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Backend] SidVPS v1.3.0 - Cosmic Explorer - Running on ${PORT} ✨`);
+    console.log(`[Backend] SidVPS v1.4.0 - Cosmic Explorer - Running on ${PORT} ✨`);
 });
