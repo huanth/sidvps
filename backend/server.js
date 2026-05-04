@@ -1,11 +1,15 @@
 const express = require('express');
+const dotenv = require('dotenv');
+const rateLimit = require('express-rate-limit');
+
+dotenv.config();
 const crypto = require('crypto');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
+const { exec, execFile, spawn } = require('child_process');
 const http = require('http');
 const WebSocket = require('ws');
 const pty = require('node-pty');
@@ -47,6 +51,21 @@ db.exec(`
   );
 `);
 const VERSION_PATH = path.join(__dirname, '../version.json');
+const ALLOWED_FILE_ROOTS = ['/root', '/var/www', '/home'];
+const VALID_SERVICES = ['nginx', 'mysql', 'php-fpm', 'sidvps-ui', 'apache2'];
+const DOMAIN_RE = /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+const IDENTIFIER_RE = /^[a-zA-Z0-9_]+$/;
+
+const resolveAllowedPath = (requestedPath = '/root') => {
+    const resolved = path.resolve(requestedPath);
+    const allowed = ALLOWED_FILE_ROOTS.some(root => resolved === root || resolved.startsWith(`${root}${path.sep}`));
+    if (!allowed) throw new Error('Access denied');
+    return resolved;
+};
+
+const isValidDomain = (domain) => typeof domain === 'string' && DOMAIN_RE.test(domain);
+const isValidIdentifier = (value) => typeof value === 'string' && IDENTIFIER_RE.test(value);
+const isValidPort = (value) => Number.isInteger(Number(value)) && Number(value) > 0 && Number(value) <= 65535;
 
 // --- Helper: Get Version ---
 const getVersion = () => {
@@ -61,9 +80,13 @@ const getVersion = () => {
 // Multer Storage for Uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const targetDir = req.query.path || '/root';
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        cb(null, targetDir);
+        try {
+            const targetDir = resolveAllowedPath(req.query.path || '/root');
+            if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+            cb(null, targetDir);
+        } catch (err) {
+            cb(err);
+        }
     },
     filename: (req, file, cb) => {
         cb(null, file.originalname);
@@ -71,15 +94,21 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Middleware
-app.use(cors({ origin: true, credentials: true }));
+// Rate limiting for auth routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  skipSuccessfulRequests: true,
+});
+
+app.use(cors({ origin: process.env.ALLOWED_ORIGIN || 'http://localhost:21999', credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const sessionMiddleware = session({
-    secret: 'sidvps-premium-secret-key',
+    secret: process.env.SESSION_SECRET || 'sidvps-premium-secret-key',
     resave: false,
     saveUninitialized: true,
-    cookie: { maxAge: 3600000 }
+    cookie: { maxAge: 3600000, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' }
 });
 app.use(sessionMiddleware);
 
@@ -160,13 +189,13 @@ app.get('/api/auth/check-setup', (req, res) => {
 });
 
 app.get('/api/system/ip', (req, res) => {
-    require('child_process').exec('curl -s ifconfig.me', (err, stdout) => {
+    execFile('curl', ['-s', 'ifconfig.me'], { timeout: 5000 }, (err, stdout) => {
         res.json({ ip: err ? '127.0.0.1' : stdout.trim() });
     });
 });
 
 // 2. Setup
-app.post('/api/auth/setup', (req, res) => {
+app.post('/api/auth/setup', authLimiter, (req, res) => {
     if (getAdmin()) return res.status(400).json({ error: 'Admin account already exists.' });
     const { user, pass, email, ip } = req.body;
     if (!user || !pass || !email) return res.status(400).json({ error: 'Invalid data. Email is required.' });
@@ -177,7 +206,7 @@ app.post('/api/auth/setup', (req, res) => {
 });
 
 // 3. Login
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', authLimiter, (req, res) => {
     const { user, pass } = req.body;
     const admin = getUserByName(user);
 
@@ -203,13 +232,13 @@ app.get('/api/auth/me', (req, res) => {
 
 // 5. System Info & Version
 app.get('/api/system/info', checkAuth, (req, res) => {
-    exec('sidvps --json', (err, stdout) => {
+    execFile('sidvps', ['--json'], { timeout: 10000 }, (err, stdout) => {
         let sysInfo = {};
         try { sysInfo = JSON.parse(stdout); } catch (e) { sysInfo = { uptime: 'N/A', ip: 'N/A' }; }
         res.json({
             ...sysInfo,
             version: getVersion(),
-            latest_version: getVersion() // Same for now
+            latest_version: getVersion()
         });
     });
 });
@@ -221,7 +250,7 @@ app.get('/api/system/stats', checkAuth, (req, res) => {
         echo "RAM:" $(free -m | grep Mem | awk '{print $2 "," $3}');
         echo "DISK:" $(df -m / | awk 'NR==2 {print $2 "," $3}');
     `;
-    exec(cmd, (err, stdout) => {
+    execFile('bash', ['-c', cmd], { timeout: 10000 }, (err, stdout) => {
         const lines = (stdout || '').trim().split('\n');
         const stats = { cpu: 0, ram: { total: 0, used: 0 }, disk: { total: 0, used: 0 } };
         lines.forEach(line => {
@@ -247,7 +276,7 @@ app.get('/api/system/services', checkAuth, (req, res) => {
     const results = [];
     let count = 0;
     services.forEach(svc => {
-        exec(`systemctl is-active ${svc}`, (err, stdout) => {
+        execFile('systemctl', ['is-active', svc], (err, stdout) => {
             results.push({ name: svc, status: stdout.trim() });
             if (++count === services.length) res.json(results);
         });
@@ -257,8 +286,10 @@ app.get('/api/system/services', checkAuth, (req, res) => {
 app.post('/api/system/service-action', checkAuth, (req, res) => {
     const { service, action } = req.body;
     if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
-    exec(`sudo systemctl ${action} ${service}`, (err, stdout, stderr) => {
-        if (err) return res.status(500).json({ error: stderr });
+    if (!VALID_SERVICES.includes(service)) return res.status(400).json({ error: 'Invalid service' });
+
+    execFile('sudo', ['systemctl', action, service], (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr || err.message });
         res.json({ success: true, message: `${service} ${action}ed.` });
     });
 });
@@ -286,18 +317,19 @@ app.get('/api/system/processes', checkAuth, (req, res) => {
 
 app.post('/api/system/process-kill', checkAuth, (req, res) => {
     const { pid } = req.body;
-    if (!pid || isNaN(pid)) return res.status(400).json({ error: 'Invalid PID' });
-    exec(`sudo kill -9 ${pid}`, (err, stdout, stderr) => {
+    const pidNum = Number(pid);
+    if (!Number.isInteger(pidNum) || pidNum <= 1) return res.status(400).json({ error: 'Invalid PID' });
+
+    execFile('sudo', ['kill', '-9', String(pidNum)], (err, stdout, stderr) => {
         if (err) return res.status(500).json({ error: stderr || err.message });
-        res.json({ success: true, message: `Process ${pid} killed.` });
+        res.json({ success: true, message: `Process ${pidNum} killed.` });
     });
 });
 
 // 8. Remote Version Check
 app.get('/api/system/check-updates', checkAuth, (req, res) => {
-    // We attempt to fetch from the specific Github raw URL
     const remoteUrl = 'https://raw.githubusercontent.com/huanth/sidvps/main/version.json';
-    exec(`curl -s ${remoteUrl}`, (err, stdout) => {
+    execFile('curl', ['-s', remoteUrl], (err, stdout) => {
         if (err) return res.json({ available: false, error: 'Cannot reach update server' });
         try {
             const remote = JSON.parse(stdout);
@@ -314,8 +346,12 @@ app.get('/api/system/check-updates', checkAuth, (req, res) => {
 });
 
 // 9. App Stack Installer
-app.post('/api/system/apps-install', checkAuth, (req, res) => {
+app.post('/api/system/apps-install', checkAuth, requireRoot, (req, res) => {
     const { app: appName, version = 'default' } = req.body;
+    const allowedApps = ['nginx', 'apache', 'mysql', 'php', 'phpmyadmin', 'nodejs', 'python'];
+
+    if (!allowedApps.includes(appName)) return res.status(400).json({ error: 'Unsupported application' });
+
     let script = '';
 
     if (appName === 'nginx') {
@@ -323,14 +359,17 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
     } else if (appName === 'apache') {
         script = 'sudo apt-get update && sudo apt-get install -y apache2';
     } else if (appName === 'mysql') {
+        if (!/^[\w.-]+$/.test(version) && version !== 'default') return res.status(400).json({ error: 'Invalid version' });
         const pkg = version === 'default' ? 'mysql-server' : (version.includes('mariadb') ? version : `mysql-server-${version}`);
         script = `sudo apt-get update && sudo apt-get install -y ${pkg}`;
     } else if (appName === 'php') {
+        if (!/^\d+(\.\d+)?$/.test(version) && version !== 'default') return res.status(400).json({ error: 'Invalid PHP version' });
         const phpVer = version === 'default' ? '8.1' : version;
         script = `sudo apt-get update && sudo apt-get install -y software-properties-common && sudo add-apt-repository -y ppa:ondrej/php && sudo apt-get update && sudo apt-get install -y php${phpVer}-fpm php${phpVer}-mysql php${phpVer}-cli php${phpVer}-common php${phpVer}-mbstring php${phpVer}-xml`;
     } else if (appName === 'phpmyadmin') {
         script = 'sudo apt-get update && sudo apt-get install -y phpmyadmin';
     } else if (appName === 'nodejs') {
+        if (!/^\d+$/.test(version) && version !== 'default') return res.status(400).json({ error: 'Invalid Node version' });
         const nodeVer = version === 'default' ? '20' : version;
         script = `curl -fsSL https://deb.nodesource.com/setup_${nodeVer}.x | sudo -E bash - && sudo apt-get install -y nodejs`;
     } else if (appName === 'python') {
@@ -339,8 +378,7 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
 
     if (!script) return res.status(400).json({ error: 'Unsupported application or version' });
 
-    // Execute in background
-    const child = exec(script, (err, stdout, stderr) => {
+    execFile('bash', ['-c', script], { timeout: 30 * 60 * 1000 }, (err, stdout, stderr) => {
         if (err) console.error(`[Installer] ${appName} failed:`, stderr);
         else console.log(`[Installer] ${appName} success.`);
     });
@@ -350,7 +388,13 @@ app.post('/api/system/apps-install', checkAuth, (req, res) => {
 
 // 10. File Manager APIs
 app.get('/api/files/list', checkAuth, (req, res) => {
-    const targetDir = req.query.path || '/root';
+    let targetDir;
+    try {
+        targetDir = resolveAllowedPath(req.query.path || '/root');
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     if (!fs.existsSync(targetDir)) return res.status(404).json({ error: 'Path not found' });
 
     fs.readdir(targetDir, { withFileTypes: true }, (err, files) => {
@@ -365,7 +409,13 @@ app.get('/api/files/list', checkAuth, (req, res) => {
 });
 
 app.get('/api/files/read', checkAuth, (req, res) => {
-    const filePath = req.query.path;
+    let filePath;
+    try {
+        filePath = resolveAllowedPath(req.query.path);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
     fs.readFile(filePath, 'utf8', (err, data) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -374,7 +424,14 @@ app.get('/api/files/read', checkAuth, (req, res) => {
 });
 
 app.post('/api/files/write', checkAuth, (req, res) => {
-    const { path: filePath, content } = req.body;
+    const { path: rawPath, content } = req.body;
+    let filePath;
+    try {
+        filePath = resolveAllowedPath(rawPath);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     fs.writeFile(filePath, content, 'utf8', (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
@@ -387,7 +444,14 @@ app.post('/api/files/upload', checkAuth, upload.single('file'), (req, res) => {
 });
 
 app.post('/api/files/delete', checkAuth, (req, res) => {
-    const { path: targetPath } = req.body;
+    const { path: rawPath } = req.body;
+    let targetPath;
+    try {
+        targetPath = resolveAllowedPath(rawPath);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     fs.rm(targetPath, { recursive: true, force: true }, (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
@@ -395,7 +459,16 @@ app.post('/api/files/delete', checkAuth, (req, res) => {
 });
 
 app.post('/api/files/rename', checkAuth, (req, res) => {
-    const { oldPath, newPath } = req.body;
+    const { oldPath: rawOldPath, newPath: rawNewPath } = req.body;
+    let oldPath;
+    let newPath;
+    try {
+        oldPath = resolveAllowedPath(rawOldPath);
+        newPath = resolveAllowedPath(rawNewPath);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     fs.rename(oldPath, newPath, (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
@@ -403,12 +476,26 @@ app.post('/api/files/rename', checkAuth, (req, res) => {
 });
 
 app.post('/api/files/mkdir', checkAuth, (req, res) => {
-    const { path: targetDir } = req.body;
+    const { path: rawPath } = req.body;
+    let targetDir;
+    try {
+        targetDir = resolveAllowedPath(rawPath);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
     fs.mkdir(targetDir, { recursive: true }, (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
     });
 });
+
+const requireRoot = (req, res, next) => {
+    if (req.session.user?.role === 'root') return next();
+    res.status(403).json({ error: 'Forbidden' });
+};
+
+const safeExecFile = (file, args, cb) => execFile(file, args, { timeout: 5 * 60 * 1000 }, cb);
 
 // --- Helper: Domains Storage (SQLite) ---
 const getDomains = () => db.prepare('SELECT * FROM domains').all();
@@ -420,9 +507,31 @@ app.get('/api/domains/list', checkAuth, (req, res) => {
     res.json(getDomains().map(d => ({ ...d, ssl: d.ssl === 1 })));
 });
 
-app.post('/api/domains/add', checkAuth, (req, res) => {
+app.post('/api/domains/add', checkAuth, requireRoot, (req, res) => {
     const { domain, root, type = 'php', port = 0, phpVersion = '8.1', webServer = 'nginx' } = req.body;
     if (!domain || !root) return res.status(400).json({ error: 'Domain and Root are required' });
+    if (!isValidDomain(domain)) return res.status(400).json({ error: 'Invalid domain' });
+
+    let resolvedRoot;
+    try {
+        resolvedRoot = resolveAllowedPath(root);
+    } catch (err) {
+        return res.status(403).json({ error: err.message });
+    }
+
+    const portNum = Number(port);
+    if ((type === 'node' || type === 'python') && !isValidPort(portNum)) return res.status(400).json({ error: 'Invalid port' });
+
+    const allowedWebServers = ['nginx', 'apache'];
+    if (!allowedWebServers.includes(webServer)) return res.status(400).json({ error: 'Invalid web server' });
+
+    const allowedTypes = ['php', 'node', 'python'];
+    if (!allowedTypes.includes(type)) return res.status(400).json({ error: 'Invalid type' });
+
+    if (type === 'php' && !/^\d+(\.\d+)?$/.test(String(phpVersion))) return res.status(400).json({ error: 'Invalid PHP version' });
+
+    const safeDomain = domain.trim();
+    const safeRoot = resolvedRoot;
 
     let configStr = '';
     let configPath = '';
@@ -492,19 +601,19 @@ ${proxyConfig}
     }
 
     try {
-        addDomain({ domain, root, type, port });
-        res.json({ success: true, message: `Website ${domain} deployed as ${type.toUpperCase()} on ${webServer.toUpperCase()}` });
+        addDomain({ domain: safeDomain, root: safeRoot, type, port });
+        res.json({ success: true, message: `Website ${safeDomain} deployed as ${type.toUpperCase()} on ${webServer.toUpperCase()}` });
     } catch (e) {
         res.status(400).json({ error: 'Domain already exists or DB error.' });
     }
 });
 
-app.post('/api/domains/ssl', checkAuth, (req, res) => {
+app.post('/api/domains/ssl', checkAuth, requireRoot, (req, res) => {
     const { domain } = req.body;
-    // Trigger certbot
-    const cmd = `sudo certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}`;
-    exec(cmd, (err, stdout, stderr) => {
-        if (err) return res.status(500).json({ error: stderr });
+    if (!isValidDomain(domain)) return res.status(400).json({ error: 'Invalid domain' });
+
+    safeExecFile('sudo', ['certbot', '--nginx', '-d', domain, '--non-interactive', '--agree-tos', '-m', `admin@${domain}`], (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr || err.message });
 
         updateDomainSSL(domain);
         res.json({ success: true, message: `SSL enabled for ${domain}.` });
@@ -519,37 +628,29 @@ app.get('/api/databases/list', checkAuth, (req, res) => {
     res.json(getDatabases());
 });
 
-app.post('/api/databases/create', checkAuth, (req, res) => {
+app.post('/api/databases/create', checkAuth, requireRoot, (req, res) => {
     const { dbname, username, password } = req.body;
     if (!dbname || !username || !password) return res.status(400).json({ error: 'Database name, username, and password required' });
+    if (!isValidIdentifier(dbname) || !isValidIdentifier(username)) return res.status(400).json({ error: 'Invalid database or username format' });
 
-    // Mocking execution of MySQL commands via root
-    const sqlCmd = `
-        CREATE DATABASE IF NOT EXISTS \`${dbname}\`;
-        CREATE USER IF NOT EXISTS '${username}'@'localhost' IDENTIFIED BY '${password}';
-        GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${username}'@'localhost';
-        FLUSH PRIVILEGES;
-    `;
-    const cmd = `mysql -e "${sqlCmd.replace(/\n/g, ' ')}"`;
-
-    // exec(cmd, (err, stdout, stderr) => { ... });
-
-    try {
-        addDatabase({ dbname, username, password });
-        res.json({ success: true, message: `Database ${dbname} created successfully.` });
-    } catch (e) {
-        res.status(400).json({ error: 'Database already exists or system error.' });
-    }
+    res.status(501).json({ error: 'Database creation requires mysql2 integration - not yet implemented. Use MySQL CLI directly.' });
 });
 
 // 12. Update Trigger
-app.post('/api/system/update', checkAuth, (req, res) => {
+app.post('/api/system/update', checkAuth, requireRoot, (req, res) => {
     console.log('[Update] Triggering system update...');
-    const updateCmd = 'cd .. && git pull origin main && npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend';
-    exec(updateCmd, (err, stdout, stderr) => {
-        if (err) return res.status(500).json({ error: stderr });
+    const updateScript = path.join(__dirname, '../scripts/update.sh');
+
+    if (!fs.existsSync(updateScript)) {
+        return res.status(500).json({ error: 'Update script not found' });
+    }
+
+    safeExecFile('bash', [updateScript], (err, stdout, stderr) => {
+        if (err) return res.status(500).json({ error: stderr || err.message });
         res.json({ success: true, message: 'Updated. Restarting...' });
-        setTimeout(() => { exec('sudo systemctl restart sidvps-ui'); }, 5000);
+        setTimeout(() => {
+            execFile('sudo', ['systemctl', 'restart', 'sidvps-ui'], () => {});
+        }, 5000);
     });
 });
 
