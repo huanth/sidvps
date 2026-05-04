@@ -15,6 +15,7 @@ const WebSocket = require('ws');
 const pty = require('node-pty');
 const multer = require('multer');
 const Database = require('better-sqlite3');
+const mysql = require('mysql2/promise');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +23,19 @@ const PORT = 21999;
 
 const db = new Database(path.join(__dirname, 'sidvps.db'));
 db.pragma('journal_mode = WAL');
+
+let mysqlPool = null;
+if (process.env.MYSQL_HOST) {
+    mysqlPool = mysql.createPool({
+        host: process.env.MYSQL_HOST,
+        user: process.env.MYSQL_USER,
+        password: process.env.MYSQL_PASSWORD,
+        database: 'mysql',
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
+    });
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -628,12 +642,29 @@ app.get('/api/databases/list', checkAuth, (req, res) => {
     res.json(getDatabases());
 });
 
-app.post('/api/databases/create', checkAuth, requireRoot, (req, res) => {
+app.post('/api/databases/create', checkAuth, requireRoot, async (req, res) => {
     const { dbname, username, password } = req.body;
     if (!dbname || !username || !password) return res.status(400).json({ error: 'Database name, username, and password required' });
     if (!isValidIdentifier(dbname) || !isValidIdentifier(username)) return res.status(400).json({ error: 'Invalid database or username format' });
 
-    res.status(501).json({ error: 'Database creation requires mysql2 integration - not yet implemented. Use MySQL CLI directly.' });
+    if (!mysqlPool) return res.status(503).json({ error: 'MySQL not configured. Set MYSQL_HOST in .env' });
+
+    let connection;
+    try {
+        connection = await mysqlPool.getConnection();
+        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbname}\``);
+        await connection.query(`CREATE USER IF NOT EXISTS ?@'localhost' IDENTIFIED BY ?`, [username, password]);
+        await connection.query(`GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO ?@'localhost'`, [username]);
+        await connection.query('FLUSH PRIVILEGES');
+
+        addDatabase({ dbname, username, password });
+        res.json({ success: true, message: `Database ${dbname} created successfully.` });
+    } catch (err) {
+        console.error('[MySQL Error]', err);
+        res.status(500).json({ error: 'Database creation failed: ' + err.message });
+    } finally {
+        if (connection) connection.release();
+    }
 });
 
 // 12. Update Trigger
